@@ -1,0 +1,35 @@
+{
+  "name": "pngquant-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser-based pngquant-style PNG palette compression",
+  "homepage": "https://pngquant.sdcb.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sdcb/pngquant-web.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "libimagequant-wasm": "^0.3.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.11",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "tailwindcss": "^4.1.11",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}

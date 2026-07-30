@@ -1,0 +1,48 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+  font-family:
+    'Aptos',
+    'IBM Plex Sans',
+    'Segoe UI',
+    sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #f3efe6;
+  background:
+    radial-gradient(circle at top left, rgba(242, 186, 97, 0.2), transparent 32%),
+    radial-gradient(circle at top right, rgba(69, 127, 160, 0.16), transparent 28%),
+    linear-gradient(145deg, #0e141c 0%, #121a24 45%, #0a1118 100%);
+  --panel: linear-gradient(180deg, rgba(19, 26, 37, 0.95), rgba(8, 13, 19, 0.92));
+  --line: rgba(255, 255, 255, 0.1);
+  --muted: #9aabbf;
+  --gold: #f2ba61;
+  --gold-soft: #ffd38f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(242, 186, 97, 0.35);
+  color: #fff;
+}
