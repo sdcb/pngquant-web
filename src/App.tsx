@@ -92,6 +92,33 @@ export default function App() {
     [setSourceFile],
   )
 
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      const items = event.clipboardData?.items
+      if (!items) {
+        return
+      }
+
+      for (const item of items) {
+        if (item.kind !== 'file' || !item.type.startsWith('image/')) {
+          continue
+        }
+
+        const file = item.getAsFile()
+        if (!file) {
+          continue
+        }
+
+        event.preventDefault()
+        handleFiles([file])
+        return
+      }
+    }
+
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [handleFiles])
+
   const runQuantize = useCallback(async () => {
     if (!source || processing) {
       return
@@ -260,10 +287,10 @@ export default function App() {
             ) : (
               <div className="max-w-sm">
                 <div className="text-lg font-semibold text-[#f7f3eb]">
-                  拖拽 PNG 到这里，或点击选择
+                  拖拽、粘贴 PNG，或点击选择
                 </div>
                 <p className="mt-2 mb-0 text-sm text-[var(--muted)]">
-                  图片只在浏览器本地处理，不会上传到服务器。不改尺寸，只做调色盘压缩。
+                  按 Ctrl+V 可直接粘贴剪贴板图片。图片只在浏览器本地处理，不会上传到服务器。
                 </p>
               </div>
             )}

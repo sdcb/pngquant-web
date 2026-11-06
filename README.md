@@ -15,7 +15,7 @@ pngquant --quality=0-20 --nofs input.png -o output.png
 - 基于 `libimagequant-wasm`（pngquant 同源量化库）
 - 固定默认参数：`quality 0-20`、关闭抖动（`--nofs`）
 - 不改图片宽高，只做调色盘压缩
-- 支持拖拽 / 点击选择 PNG，前后预览与一键下载
+- 支持拖拽 / 粘贴 / 点击选择 PNG，前后预览与一键下载
 - 适合 Cloudflare Pages 静态托管
 
 ## 技术栈
