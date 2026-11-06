@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildOutputName, formatBytes, formatPercent } from './lib/format'
-import { DEFAULT_OPTIONS, disposeQuantizer, quantizePng } from './lib/pngquant'
+import { DEFAULT_OPTIONS, disposeQuantizer, prepareQuantizer, quantizePng } from './lib/pngquant'
 
 type SourceImage = {
   file: File
@@ -14,7 +14,6 @@ type ResultImage = {
   width: number
   height: number
   paletteLength: number
-  quality: number
   outputName: string
   blob: Blob
 }
@@ -59,6 +58,9 @@ export default function App() {
     (file: File | null) => {
       clearResult()
       setError(null)
+      if (file) {
+        prepareQuantizer()
+      }
 
       setSource((prev) => {
         revokeUrl(prev?.url)
@@ -144,7 +146,6 @@ export default function App() {
         width: quantized.width,
         height: quantized.height,
         paletteLength: quantized.paletteLength,
-        quality: quantized.quality,
         outputName: buildOutputName(source.file.name),
         blob,
       })
@@ -360,10 +361,6 @@ export default function App() {
                 <Stat label="尺寸" value={`${result.width} × ${result.height}`} />
                 <Stat label="调色板" value={`${result.paletteLength} 色`} />
                 <Stat
-                  label="量化质量"
-                  value={`${Math.round(result.quality * 100)}%`}
-                />
-                <Stat
                   label="耗时"
                   value={elapsedMs == null ? '-' : `${elapsedMs} ms`}
                 />
@@ -397,7 +394,7 @@ export default function App() {
         >
           https://pngquant.sdcb.ai
         </a>
-        · MIT · 基于 libimagequant WASM
+        · MIT · 基于 Sdcb.SimdCodecs（.NET WebAssembly）
       </footer>
     </div>
   )

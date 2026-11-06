@@ -1,19 +1,14 @@
 export type QuantizeOptions = {
-  speed?: number
   quality?: {
     min: number
     target: number
   }
   maxColors?: number
-  dithering?: number
-  posterization?: number
+  dithering?: boolean
 }
 
 export type QuantizeResult = {
-  palette: number[][]
   pngBytes: Uint8Array
-  imageData: ImageData
-  quality: number
   paletteLength: number
   width: number
   height: number
@@ -21,11 +16,10 @@ export type QuantizeResult = {
 
 /** Matches: pngquant --quality=0-20 --nofs */
 export const DEFAULT_OPTIONS: Required<
-  Pick<QuantizeOptions, 'quality' | 'dithering' | 'speed' | 'maxColors'>
+  Pick<QuantizeOptions, 'quality' | 'dithering' | 'maxColors'>
 > = {
   quality: { min: 0, target: 20 },
-  dithering: 0,
-  speed: 3,
+  dithering: false,
   maxColors: 256,
 }
 
@@ -39,10 +33,7 @@ type WorkerSuccess = {
   id: number
   success: true
   result: {
-    palette: number[][]
     pngBytes: Uint8Array
-    imageDataBuffer: ArrayBuffer
-    quality: number
     paletteLength: number
     width: number
     height: number
@@ -88,17 +79,8 @@ function getWorker(): Worker {
     }
 
     const { result } = message
-    const imageData = new ImageData(
-      new Uint8ClampedArray(result.imageDataBuffer),
-      result.width,
-      result.height,
-    )
-
     entry.resolve({
-      palette: result.palette,
       pngBytes: result.pngBytes,
-      imageData,
-      quality: result.quality,
       paletteLength: result.paletteLength,
       width: result.width,
       height: result.height,
@@ -157,6 +139,11 @@ export async function quantizePng(
 
     activeWorker.postMessage(request, [buffer])
   })
+}
+
+/** Creates the worker so the quantizer loads while the user is still choosing; quantizePng does this too. */
+export function prepareQuantizer(): void {
+  getWorker()
 }
 
 export function disposeQuantizer(): void {

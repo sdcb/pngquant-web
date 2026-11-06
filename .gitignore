@@ -24,3 +24,8 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# .NET quantizer build output (npm run build:wasm)
+public/dotnet
+wasm/bin
+wasm/obj

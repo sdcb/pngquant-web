@@ -1,26 +1,17 @@
-import init, {
-  decode_png_to_rgba,
-  encode_palette_to_png,
-  ImageQuantizer,
-} from 'libimagequant-wasm/wasm/libimagequant_wasm.js'
-import wasmUrl from 'libimagequant-wasm/wasm/libimagequant_wasm_bg.wasm?url'
+// Runs the .NET quantizer (Sdcb.SimdCodecs.Png compiled to WebAssembly, see wasm/) off the main thread.
+// `npm run build:wasm` publishes it to public/dotnet.
 
 export type WorkerQuantizeOptions = {
-  speed?: number
   quality?: {
     min: number
     target: number
   }
   maxColors?: number
-  dithering?: number
-  posterization?: number
+  dithering?: boolean
 }
 
 export type WorkerQuantizeResult = {
-  palette: number[][]
   pngBytes: Uint8Array
-  imageDataBuffer: ArrayBuffer
-  quality: number
   paletteLength: number
   width: number
   height: number
@@ -44,118 +35,90 @@ type WorkerResponse =
       error: string
     }
 
-let initPromise: Promise<void> | null = null
-
-function ensureInit(): Promise<void> {
-  initPromise ??= init({ module_or_path: wasmUrl }).then(() => undefined)
-  return initPromise
-}
-
-function quantizeRgba(
-  rgba: Uint8ClampedArray,
-  width: number,
-  height: number,
-  options: WorkerQuantizeOptions = {},
-): WorkerQuantizeResult {
-  const quantizer = new ImageQuantizer()
-
-  try {
-    if (options.speed !== undefined) {
-      quantizer.setSpeed(options.speed)
-    }
-
-    if (options.quality !== undefined) {
-      quantizer.setQuality(options.quality.min, options.quality.target)
-    }
-
-    if (options.maxColors !== undefined) {
-      quantizer.setMaxColors(options.maxColors)
-    }
-
-    if (options.posterization !== undefined) {
-      quantizer.setPosterization(options.posterization)
-    }
-
-    const result = quantizer.quantizeImage(rgba, width, height)
-
-    try {
-      if (options.dithering !== undefined) {
-        result.setDithering(options.dithering)
-      }
-
-      const palette = result.getPalette() as number[][]
-      const quality = result.getQuantizationQuality()
-      const paletteLength = result.getPaletteLength()
-      const indices = result.getPaletteIndices(rgba, width, height)
-      const pngBytes = encode_palette_to_png(indices, palette, width, height)
-
-      const pixelCount = width * height
-      const imageDataBuffer = new ArrayBuffer(pixelCount * 4)
-      const imageData = new Uint8ClampedArray(imageDataBuffer)
-
-      for (let i = 0; i < pixelCount; i += 1) {
-        const color = palette[indices[i]]!
-        const offset = i * 4
-        imageData[offset] = color[0]!
-        imageData[offset + 1] = color[1]!
-        imageData[offset + 2] = color[2]!
-        imageData[offset + 3] = color[3]!
-      }
-
-      return {
-        palette,
-        pngBytes,
-        imageDataBuffer,
-        quality,
-        paletteLength,
-        width,
-        height,
-      }
-    } finally {
-      result.free()
-    }
-  } finally {
-    quantizer.free()
+type Exports = {
+  Quantizer: {
+    Quantize: (
+      png: Uint8Array,
+      minQuality: number,
+      maxQuality: number,
+      maxColors: number,
+      dither: boolean,
+    ) => Uint8Array
   }
 }
 
-function quantizePngBytes(
-  pngBytes: Uint8Array,
-  options: WorkerQuantizeOptions = {},
-): WorkerQuantizeResult {
-  const decoded = decode_png_to_rgba(pngBytes) as [
-    Uint8ClampedArray,
-    number,
-    number,
-  ]
-  const [rgba, width, height] = decoded
-  return quantizeRgba(rgba, width, height, options)
+let exportsPromise: Promise<Exports> | null = null
+
+function ensureInit(): Promise<Exports> {
+  exportsPromise ??= (async () => {
+    const url = new URL(`${import.meta.env.BASE_URL}dotnet/dotnet.js`, self.location.origin).href
+    const { dotnet } = await import(/* @vite-ignore */ url)
+    const runtime = await dotnet.create()
+    return (await runtime.getAssemblyExports(runtime.getConfig().mainAssemblyName)) as Exports
+  })()
+  exportsPromise.catch(() => {
+    exportsPromise = null
+  })
+  return exportsPromise
 }
 
-self.onmessage = (event: MessageEvent<WorkerRequest>) => {
+// Start loading the runtime (about 2.5 MB compressed) as soon as the worker exists, before the first request.
+void ensureInit().catch(() => undefined)
+
+/** Width, height and palette size, read from the PNG we just wrote (IHDR first, then PLTE before IDAT). */
+function describe(png: Uint8Array): { width: number; height: number; paletteLength: number } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength)
+  const width = view.getUint32(16)
+  const height = view.getUint32(20)
+  let paletteLength = 0
+  for (let at = 8; at + 8 <= png.byteLength; ) {
+    const length = view.getUint32(at)
+    const type = String.fromCharCode(png[at + 4]!, png[at + 5]!, png[at + 6]!, png[at + 7]!)
+    if (type === 'PLTE') {
+      paletteLength = length / 3
+      break
+    }
+    if (type === 'IDAT') {
+      break
+    }
+    at += 12 + length
+  }
+  return { width, height, paletteLength }
+}
+
+async function quantizePngBytes(
+  pngBytes: Uint8Array,
+  options: WorkerQuantizeOptions,
+): Promise<WorkerQuantizeResult> {
+  const exports = await ensureInit()
+  const output = exports.Quantizer.Quantize(
+    pngBytes,
+    options.quality?.min ?? 0,
+    options.quality?.target ?? 100,
+    options.maxColors ?? 256,
+    options.dithering ?? false,
+  )
+  return { pngBytes: output, ...describe(output) }
+}
+
+// addEventListener, not onmessage: the .NET runtime's start-up waits forever in a worker whose onmessage is set
+// (it takes the worker for one of its own).
+self.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
   const { id, pngBytes, options } = event.data
 
   void (async () => {
     try {
-      await ensureInit()
-      const result = quantizePngBytes(new Uint8Array(pngBytes), options ?? {})
+      const result = await quantizePngBytes(new Uint8Array(pngBytes), options ?? {})
       const pngBuffer = result.pngBytes.buffer.slice(
         result.pngBytes.byteOffset,
         result.pngBytes.byteOffset + result.pngBytes.byteLength,
-      )
-      const transferableResult: WorkerQuantizeResult = {
-        ...result,
-        pngBytes: new Uint8Array(pngBuffer),
-      }
+      ) as ArrayBuffer
       const response: WorkerResponse = {
         id,
         success: true,
-        result: transferableResult,
+        result: { ...result, pngBytes: new Uint8Array(pngBuffer) },
       }
-      ;(self as DedicatedWorkerGlobalScope).postMessage(response, [
-        pngBuffer,
-        transferableResult.imageDataBuffer,
-      ])
+      ;(self as DedicatedWorkerGlobalScope).postMessage(response, [pngBuffer])
     } catch (error) {
       let message = 'Unknown error occurred'
       if (error instanceof Error && error.message) {
@@ -178,4 +141,4 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       ;(self as DedicatedWorkerGlobalScope).postMessage(response)
     }
   })()
-}
+})

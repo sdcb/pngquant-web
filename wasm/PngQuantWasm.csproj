@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <!-- The quantizer the site runs: Sdcb.SimdCodecs.Png, Mono AOT-compiled to WebAssembly with SIMD.
+       `npm run build:wasm` publishes it into public/dotnet (git-ignored); the worker loads it from there. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RunAOTCompilation>true</RunAOTCompilation>
+    <WasmEnableSIMD>true</WasmEnableSIMD>
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
+    <!-- Cloudflare compresses on the fly; precompressed copies would only be uploaded and never served. -->
+    <CompressionEnabled>false</CompressionEnabled>
+    <WasmNativeDebugSymbols>false</WasmNativeDebugSymbols>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Sdcb.SimdCodecs.Png" Version="2.0.0-preview.20261107.1" />
+  </ItemGroup>
+
+</Project>

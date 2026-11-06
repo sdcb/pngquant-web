@@ -11,13 +11,13 @@
   },
   "license": "MIT",
   "scripts": {
+    "build:wasm": "node scripts/build-wasm.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {
-    "libimagequant-wasm": "^0.3.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
