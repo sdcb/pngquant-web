@@ -33,8 +33,6 @@ export function formatPercent(ratio: number): string {
 
 export function buildOutputName(inputName: string): string {
   const trimmed = inputName.trim() || 'image.png'
-  if (/\.png$/i.test(trimmed)) {
-    return trimmed.replace(/\.png$/i, '.quant.png')
-  }
-  return `${trimmed}.quant.png`
+  const stem = trimmed.replace(/\.(png|apng|jpe?g|jfif|webp|avif|gif|bmp|ico|tiff?|heic|heif)$/i, '')
+  return `${stem || 'image'}.quant.png`
 }

@@ -1,11 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { buildOutputName, formatBytes, formatPercent } from './lib/format'
-import { DEFAULT_OPTIONS, disposeQuantizer, prepareQuantizer, quantizePng } from './lib/pngquant'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { CompareView } from './components/CompareView'
+import { Dropzone } from './components/Dropzone'
+import { PalettePanel } from './components/PalettePanel'
+import { ResultBar } from './components/ResultBar'
+import { SettingsPanel } from './components/SettingsPanel'
+import { buildOutputName, formatBytes } from './lib/format'
+import {
+  DEFAULT_OPTIONS,
+  disposeQuantizer,
+  normalizeOptions,
+  prepareQuantizer,
+  quantizePng,
+  type QuantizeOptions,
+} from './lib/pngquant'
 
 type SourceImage = {
   file: File
   url: string
   bytes: number
+  width: number
+  height: number
 }
 
 type ResultImage = {
@@ -14,8 +28,29 @@ type ResultImage = {
   width: number
   height: number
   paletteLength: number
+  palette: Uint8Array
   outputName: string
   blob: Blob
+}
+
+const STORAGE_KEY = 'pngquant-web:options'
+const REQUANTIZE_DELAY_MS = 400
+
+function loadOptions(): QuantizeOptions {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? normalizeOptions(JSON.parse(raw)) : DEFAULT_OPTIONS
+  } catch {
+    return DEFAULT_OPTIONS
+  }
+}
+
+function saveOptions(options: QuantizeOptions) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(options))
+  } catch {
+    // Storage blocked (private mode etc.): settings just don't persist.
+  }
 }
 
 function revokeUrl(url: string | null | undefined) {
@@ -24,21 +59,49 @@ function revokeUrl(url: string | null | undefined) {
   }
 }
 
-function isPngFile(file: File): boolean {
-  if (file.type === 'image/png') {
-    return true
-  }
-  return file.name.toLowerCase().endsWith('.png')
+const IMAGE_EXTENSION = /\.(png|apng|jpe?g|jfif|webp|avif|gif|bmp|ico|svg|tiff?|heic|heif)$/i
+
+/** Anything that looks like an image; whether the browser can actually decode it is found out by readSize. */
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || IMAGE_EXTENSION.test(file.name)
+}
+
+/** Lossy sources (JPEG, WebP, AVIF, ...) often come out bigger as a palette PNG. */
+function isLosslessPngLike(file: File): boolean {
+  return file.type === 'image/png' || file.type === 'image/apng' || /\.a?png$/i.test(file.name)
+}
+
+/** Files from the OS, or an image dragged out of another web page (only a URL then). */
+function hasDroppable(dt: DataTransfer | null): boolean {
+  return !!dt && (dt.types.includes('Files') || dt.types.includes('text/uri-list'))
+}
+
+async function fileFromUrl(url: string): Promise<File> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const blob = await response.blob()
+  const name = decodeURIComponent(new URL(url).pathname.split('/').pop() || 'image')
+  return new File([blob], name, { type: blob.type })
+}
+
+function readSize(url: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
+    img.onerror = () => reject(new Error('浏览器无法解码这张图片，请换成 PNG / JPEG / WebP / AVIF 等常见格式。'))
+    img.src = url
+  })
 }
 
 export default function App() {
-  const inputRef = useRef<HTMLInputElement>(null)
   const [source, setSource] = useState<SourceImage | null>(null)
   const [result, setResult] = useState<ResultImage | null>(null)
-  const [dragging, setDragging] = useState(false)
+  const [options, setOptions] = useState<QuantizeOptions>(loadOptions)
   const [processing, setProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [elapsedMs, setElapsedMs] = useState<number | null>(null)
+  const requestId = useRef(0)
+  const lastSource = useRef<SourceImage | null>(null)
 
   useEffect(() => {
     return () => {
@@ -46,35 +109,47 @@ export default function App() {
     }
   }, [])
 
-  const clearResult = useCallback(() => {
+  useEffect(() => {
+    saveOptions(options)
+  }, [options])
+
+  const replaceResult = useCallback((next: ResultImage | null) => {
     setResult((prev) => {
-      revokeUrl(prev?.url)
-      return null
+      if (prev !== next) revokeUrl(prev?.url)
+      return next
     })
-    setElapsedMs(null)
   }, [])
 
   const setSourceFile = useCallback(
-    (file: File | null) => {
-      clearResult()
+    async (file: File | null) => {
+      requestId.current++
+      replaceResult(null)
+      setElapsedMs(null)
       setError(null)
-      if (file) {
-        prepareQuantizer()
+      setProcessing(false)
+
+      if (!file) {
+        setSource((prev) => {
+          revokeUrl(prev?.url)
+          return null
+        })
+        return
       }
 
-      setSource((prev) => {
-        revokeUrl(prev?.url)
-        if (!file) {
-          return null
-        }
-        return {
-          file,
-          url: URL.createObjectURL(file),
-          bytes: file.size,
-        }
-      })
+      prepareQuantizer()
+      const url = URL.createObjectURL(file)
+      try {
+        const size = await readSize(url)
+        setSource((prev) => {
+          revokeUrl(prev?.url)
+          return { file, url, bytes: file.size, ...size }
+        })
+      } catch (err) {
+        revokeUrl(url)
+        setError(err instanceof Error ? err.message : String(err))
+      }
     },
-    [clearResult],
+    [replaceResult],
   )
 
   const handleFiles = useCallback(
@@ -84,12 +159,12 @@ export default function App() {
         return
       }
 
-      if (!isPngFile(file)) {
-        setError('请选择 PNG 文件。')
+      if (!isImageFile(file)) {
+        setError('请选择图片文件。')
         return
       }
 
-      setSourceFile(file)
+      void setSourceFile(file)
     },
     [setSourceFile],
   )
@@ -121,43 +196,99 @@ export default function App() {
     return () => window.removeEventListener('paste', handlePaste)
   }, [handleFiles])
 
-  const runQuantize = useCallback(async () => {
-    if (!source || processing) {
-      return
+  // Drop anywhere on the page. Without this, a drop outside a drop target makes the browser open the file itself.
+  const [dragging, setDragging] = useState(false)
+  useEffect(() => {
+    let depth = 0
+    const onEnter = (event: DragEvent) => {
+      if (!hasDroppable(event.dataTransfer)) return
+      event.preventDefault()
+      depth++
+      setDragging(true)
     }
-
-    setProcessing(true)
-    setError(null)
-    clearResult()
-
-    const started = performance.now()
-
-    try {
-      const quantized = await quantizePng(source.file, DEFAULT_OPTIONS)
-      const bytes = quantized.pngBytes
-      const copy = new Uint8Array(bytes.byteLength)
-      copy.set(bytes)
-      const blob = new Blob([copy.buffer], { type: 'image/png' })
-      const url = URL.createObjectURL(blob)
-
-      setResult({
-        url,
-        bytes: blob.size,
-        width: quantized.width,
-        height: quantized.height,
-        paletteLength: quantized.paletteLength,
-        outputName: buildOutputName(source.file.name),
-        blob,
-      })
-      setElapsedMs(Math.round(performance.now() - started))
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : '压缩失败，请换一张 PNG 再试。'
-      setError(message)
-    } finally {
-      setProcessing(false)
+    const onOver = (event: DragEvent) => {
+      if (!hasDroppable(event.dataTransfer)) return
+      event.preventDefault()
+      event.dataTransfer!.dropEffect = 'copy'
     }
-  }, [clearResult, processing, source])
+    const onLeave = () => {
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setDragging(false)
+    }
+    const onDrop = (event: DragEvent) => {
+      const dt = event.dataTransfer
+      if (!hasDroppable(dt)) return
+      event.preventDefault()
+      depth = 0
+      setDragging(false)
+      if (dt!.files.length > 0) {
+        handleFiles(dt!.files)
+        return
+      }
+      const url = dt!.getData('text/uri-list').split(/\r?\n/).find((line) => line && !line.startsWith('#'))
+      if (!url) return
+      void fileFromUrl(url).then(
+        (file) => handleFiles([file]),
+        () => setError('无法读取拖入的网页图片（对方网站可能禁止跨域访问），请先保存到本地再拖入。'),
+      )
+    }
+    window.addEventListener('dragenter', onEnter)
+    window.addEventListener('dragover', onOver)
+    window.addEventListener('dragleave', onLeave)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragenter', onEnter)
+      window.removeEventListener('dragover', onOver)
+      window.removeEventListener('dragleave', onLeave)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [handleFiles])
+
+  const runQuantize = useCallback(
+    async (image: SourceImage, opts: QuantizeOptions) => {
+      const id = ++requestId.current
+      setProcessing(true)
+      setError(null)
+      const started = performance.now()
+
+      try {
+        const quantized = await quantizePng(image.file, opts)
+        if (id !== requestId.current) return
+        const blob = new Blob([quantized.pngBytes as Uint8Array<ArrayBuffer>], { type: 'image/png' })
+        replaceResult({
+          url: URL.createObjectURL(blob),
+          bytes: blob.size,
+          width: quantized.width,
+          height: quantized.height,
+          paletteLength: quantized.paletteLength,
+          palette: quantized.palette,
+          outputName: buildOutputName(image.file.name),
+          blob,
+        })
+        setElapsedMs(Math.round(performance.now() - started))
+      } catch (err) {
+        if (id !== requestId.current) return
+        setError(err instanceof Error ? err.message : '压缩失败，请换一张 PNG 再试。')
+      } finally {
+        if (id === requestId.current) setProcessing(false)
+      }
+    },
+    [replaceResult],
+  )
+
+  // Quantize right away for a new image; after a settings change, once the user pauses.
+  useEffect(() => {
+    if (!source) return
+    const isNewSource = lastSource.current !== source
+    const timer = window.setTimeout(
+      () => {
+        lastSource.current = source
+        void runQuantize(source, options)
+      },
+      isNewSource ? 0 : REQUANTIZE_DELAY_MS,
+    )
+    return () => window.clearTimeout(timer)
+  }, [options, runQuantize, source])
 
   const download = useCallback(() => {
     if (!result) {
@@ -170,34 +301,14 @@ export default function App() {
     anchor.click()
   }, [result])
 
-  const savings = useMemo(() => {
-    if (!source || !result) {
-      return null
-    }
-    const saved = source.bytes - result.bytes
-    const ratio = source.bytes > 0 ? saved / source.bytes : 0
-    return { saved, ratio }
-  }, [result, source])
-
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-5 px-4 py-5 sm:px-6 sm:py-7">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <img
-            src="/favicon.svg"
-            alt=""
-            className="h-10 w-10 rounded-[12px] shadow-[0_8px_18px_rgba(0,0,0,0.18)]"
-          />
-          <div>
-            <h1 className="m-0 font-serif text-[clamp(1.7rem,3vw,2.35rem)] leading-none text-[#f7f3eb]">
-              pngquant Web
-            </h1>
-            <p className="mt-2 mb-0 text-sm text-[var(--muted)]">
-              纯前端调色盘压缩 · 默认{' '}
-              <code className="rounded bg-white/5 px-1.5 py-0.5 text-[0.8rem] text-[var(--gold-soft)]">
-                --quality=0-20 --nofs
-              </code>
-            </p>
+    <div className="mx-auto flex min-h-screen max-w-[1280px] flex-col gap-6 px-4 py-5 sm:px-6 sm:py-7">
+      <header className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <img src="/favicon.svg" alt="" className="h-9 w-9 rounded-[10px] ring-1 ring-line-strong" />
+          <div className="min-w-0">
+            <h1 className="m-0 text-[17px] leading-tight font-semibold tracking-tight text-fg">pngquant Web</h1>
+            <p className="m-0 truncate text-xs text-muted">浏览器本地调色板压缩 · 图片不会离开你的设备</p>
           </div>
         </div>
 
@@ -205,208 +316,146 @@ export default function App() {
           href="https://github.com/sdcb/pngquant-web"
           target="_blank"
           rel="noreferrer"
-          className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm font-semibold text-[#dce6f3] no-underline transition hover:border-[rgba(242,186,97,0.3)] hover:bg-white/[0.08] hover:text-white"
+          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-line px-3 text-xs font-medium text-fg-2 no-underline transition hover:border-line-strong hover:text-fg"
         >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+          </svg>
           GitHub
         </a>
       </header>
 
-      <main className="grid flex-1 gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-        <section className="rounded-[20px] border border-[var(--line)] bg-[image:var(--panel)] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)] backdrop-blur-[14px] sm:p-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="m-0 font-serif text-lg text-[#f8fbff]">选择 PNG</h2>
-            {source ? (
+      <main className="grid flex-1 items-start gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <aside className="order-2 flex flex-col gap-5 lg:order-none lg:sticky lg:top-6">
+          {source ? (
+            <section className="card flex items-center gap-3 p-3">
+              <div className="checker-sm h-12 w-12 shrink-0 overflow-hidden rounded-lg ring-1 ring-line">
+                <img src={source.url} alt="" className="h-full w-full object-contain" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-fg" title={source.file.name}>
+                  {source.file.name}
+                </div>
+                <div className="tabular font-mono text-[11px] text-muted">
+                  {source.width}×{source.height} · {formatBytes(source.bytes)}
+                </div>
+              </div>
+              <Dropzone onFiles={handleFiles} className="shrink-0 !border-solid border-line px-2.5 py-1.5 text-xs text-fg-2 hover:text-fg">
+                更换
+              </Dropzone>
               <button
                 type="button"
-                onClick={() => setSourceFile(null)}
-                className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-sm text-[#dce6f3] transition hover:bg-white/[0.08]"
+                onClick={() => void setSourceFile(null)}
+                aria-label="清除图片"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-white/5 hover:text-fg"
               >
-                清除
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+                  <path d="M3 3l10 10M13 3 3 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
               </button>
-            ) : null}
-          </div>
+            </section>
+          ) : null}
 
-          <div
-            role="button"
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                inputRef.current?.click()
-              }
-            }}
-            onClick={() => inputRef.current?.click()}
-            onDragEnter={(event) => {
-              event.preventDefault()
-              setDragging(true)
-            }}
-            onDragOver={(event) => {
-              event.preventDefault()
-              setDragging(true)
-            }}
-            onDragLeave={(event) => {
-              event.preventDefault()
-              setDragging(false)
-            }}
-            onDrop={(event) => {
-              event.preventDefault()
-              setDragging(false)
-              handleFiles(event.dataTransfer.files)
-            }}
-            className={[
-              'flex min-h-[280px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-8 text-center transition',
-              dragging
-                ? 'border-[var(--gold)] bg-[rgba(242,186,97,0.08)]'
-                : 'border-white/15 bg-[linear-gradient(180deg,rgba(7,12,18,0.86),rgba(14,19,28,0.98))] hover:border-[rgba(242,186,97,0.35)]',
-            ].join(' ')}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/png,.png"
-              className="hidden"
-              onChange={(event) => {
-                handleFiles(event.target.files)
-                event.currentTarget.value = ''
-              }}
-            />
+          <SettingsPanel options={options} onChange={setOptions} />
+        </aside>
 
-            {source ? (
-              <div className="flex w-full flex-col items-center gap-4">
-                <img
-                  src={source.url}
-                  alt={source.file.name}
-                  className="max-h-[320px] max-w-full rounded-xl object-contain shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
-                />
-                <div className="text-sm text-[#dce6f3]">
-                  <div className="font-semibold break-all">{source.file.name}</div>
-                  <div className="mt-1 text-[var(--muted)]">
-                    {formatBytes(source.bytes)}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="max-w-sm">
-                <div className="text-lg font-semibold text-[#f7f3eb]">
-                  拖拽、粘贴 PNG，或点击选择
-                </div>
-                <p className="mt-2 mb-0 text-sm text-[var(--muted)]">
-                  按 Ctrl+V 可直接粘贴剪贴板图片。图片只在浏览器本地处理，不会上传到服务器。
-                </p>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              disabled={!source || processing}
-              onClick={() => {
-                void runQuantize()
-              }}
-              className="inline-flex h-11 min-w-[140px] items-center justify-center rounded-xl bg-[linear-gradient(135deg,#f2ba61,#ffd38f)] px-5 text-sm font-bold text-[#0c1118] transition enabled:hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {processing ? '压缩中…' : 'pngquant'}
-            </button>
-
-            <div className="text-sm text-[var(--muted)]">
-              等价命令：
-              <code className="ml-1 rounded bg-white/5 px-1.5 py-0.5 text-[0.78rem] text-[#dce6f3]">
-                pngquant --quality=0-20 --nofs input.png -o output.png
-              </code>
-            </div>
-          </div>
-
+        <div className="order-1 flex min-w-0 flex-col gap-5 lg:order-none">
           {error ? (
-            <div className="mt-4 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+            <div role="alert" className="fade-in rounded-xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm text-[#ffd9d4]">
               {error}
             </div>
           ) : null}
-        </section>
 
-        <section className="rounded-[20px] border border-[var(--line)] bg-[image:var(--panel)] p-4 shadow-[0_12px_24px_rgba(0,0,0,0.22)] backdrop-blur-[14px] sm:p-5">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="m-0 font-serif text-lg text-[#f8fbff]">压缩结果</h2>
-            {result ? (
-              <button
-                type="button"
-                onClick={download}
-                className="rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1 text-sm font-semibold text-[#dce6f3] transition hover:border-[rgba(242,186,97,0.3)] hover:bg-white/[0.08]"
-              >
-                下载
-              </button>
-            ) : null}
-          </div>
-
-          {result ? (
-            <div className="flex flex-col gap-4">
-              <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(7,12,18,0.86),rgba(14,19,28,0.98))] p-4">
-                <img
-                  src={result.url}
-                  alt={result.outputName}
-                  className="max-h-[320px] max-w-full rounded-xl object-contain shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
+          {source ? (
+            <>
+              <section className="card overflow-hidden">
+                <CompareView
+                  key={source.url}
+                  beforeUrl={source.url}
+                  afterUrl={result?.url ?? null}
+                  width={source.width}
+                  height={source.height}
+                  processing={processing}
                 />
-              </div>
-
-              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                <Stat label="输出大小" value={formatBytes(result.bytes)} />
-                <Stat
-                  label="体积变化"
-                  value={
-                    savings
-                      ? `${formatBytes(Math.abs(savings.saved))} (${formatPercent(savings.ratio)})`
-                      : '-'
-                  }
+                <ResultBar
+                  sourceBytes={source.bytes}
+                  result={result}
+                  elapsedMs={elapsedMs}
+                  processing={processing}
+                  onDownload={download}
                 />
-                <Stat label="尺寸" value={`${result.width} × ${result.height}`} />
-                <Stat label="调色板" value={`${result.paletteLength} 色`} />
-                <Stat
-                  label="耗时"
-                  value={elapsedMs == null ? '-' : `${elapsedMs} ms`}
-                />
-              </dl>
+              </section>
 
-              <p className="m-0 text-sm text-[var(--muted)]">
-                文件名：
-                <span className="text-[#dce6f3]">{result.outputName}</span>
-              </p>
-            </div>
+              {result && !isLosslessPngLike(source.file) && result.bytes >= source.bytes ? (
+                <p className="m-0 px-1 text-xs text-muted">
+                  源文件是有损格式（如 JPEG / WebP / AVIF），转成调色板 PNG 不一定更小；这类图更适合截图、图标、插画。
+                </p>
+              ) : null}
+
+              {result && result.paletteLength > 0 ? (
+                <PalettePanel key={result.url} palette={result.palette} />
+              ) : result ? (
+                <p className="m-0 px-1 text-xs text-muted">
+                  输出没有调色板：可能最低质量没有达到，按无损写出；也可能结果是灰度图。
+                </p>
+              ) : null}
+            </>
           ) : (
-            <div className="flex min-h-[280px] flex-col items-center justify-center rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(7,12,18,0.86),rgba(14,19,28,0.98))] px-6 text-center">
-              <div className="text-lg font-semibold text-[#f7f3eb]">
-                {processing ? '正在本地量化…' : '还没有结果'}
+            <Dropzone
+              onFiles={handleFiles}
+              className="card flex min-h-[min(70vh,640px)] flex-col items-center justify-center gap-5 !border-dashed px-6 py-16 text-center"
+            >
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-line-strong bg-surface-2 text-gold">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M12 15V4m0 0-4 4m4-4 4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
               </div>
-              <p className="mt-2 mb-0 max-w-sm text-sm text-[var(--muted)]">
-                {processing
-                  ? '大图可能需要几秒，界面不会上传任何数据。'
-                  : '选择 PNG 后点击 pngquant，结果会出现在这里。'}
-              </p>
-            </div>
+              <div>
+                <div className="text-xl font-semibold tracking-tight text-fg">拖入图片，或点击选择</div>
+                <p className="mx-auto mt-2 mb-0 max-w-md text-sm text-muted">
+                  也可以直接按{' '}
+                  <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-2">Ctrl</kbd>{' '}
+                  +{' '}
+                  <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-2">V</kbd>{' '}
+                  粘贴。量化在浏览器里用 WebAssembly 完成，不上传任何数据。
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2 text-[11px] text-muted">
+                {['PNG / JPEG / WebP / AVIF', '前后对比', '像素级缩放', '本地处理'].map((t) => (
+                  <span key={t} className="rounded-full border border-line px-2.5 py-1">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </Dropzone>
           )}
-        </section>
+        </div>
       </main>
 
-      <footer className="pb-2 text-center text-xs text-[var(--muted)]">
-        生产环境：
-        <a
-          href="https://pngquant.sdcb.ai"
-          className="mx-1 text-[var(--gold-soft)] no-underline hover:underline"
-        >
-          https://pngquant.sdcb.ai
-        </a>
-        · MIT · 基于 Sdcb.SimdCodecs（.NET WebAssembly）
-      </footer>
-    </div>
-  )
-}
+      {dragging ? (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-bg/75 p-6 backdrop-blur-sm">
+          <div className="fade-in flex h-full max-h-[480px] w-full max-w-3xl flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-gold/70 bg-gold/[0.04]">
+            <div className="text-xl font-semibold tracking-tight text-fg">松开即可载入</div>
+            <div className="text-sm text-muted">PNG、JPEG、WebP、AVIF、GIF 等浏览器能打开的图片</div>
+          </div>
+        </div>
+      ) : null}
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5">
-      <dt className="text-[0.75rem] tracking-wide text-[var(--muted)] uppercase">
-        {label}
-      </dt>
-      <dd className="mt-1 mb-0 font-semibold text-[#f3efe6]">{value}</dd>
+      <footer className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 pb-2 text-[11px] text-muted">
+        <span>MIT</span>
+        <span aria-hidden>·</span>
+        <span>
+          量化器{' '}
+          <a href="https://github.com/sdcb/SimdCodecs" target="_blank" rel="noreferrer" className="text-fg-2 no-underline hover:text-gold-soft">
+            Sdcb.SimdCodecs
+          </a>{' '}
+          （.NET WebAssembly + SIMD）
+        </span>
+        <span aria-hidden>·</span>
+        <a href="https://pngquant.sdcb.ai" className="text-fg-2 no-underline hover:text-gold-soft">
+          pngquant.sdcb.ai
+        </a>
+      </footer>
     </div>
   )
 }

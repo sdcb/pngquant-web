@@ -1,43 +1,91 @@
+import type { WorkerQuantizeOptions, WorkerQuantizeResult } from './pngquant.worker'
+
+export type Compression = 'fast' | 'default' | 'smallest'
+
 export type QuantizeOptions = {
-  quality?: {
+  quality: {
     min: number
-    target: number
+    max: number
   }
-  maxColors?: number
-  dithering?: boolean
+  maxColors: number
+  dithering: boolean
+  compression: Compression
+  keepMetadata: boolean
 }
 
-export type QuantizeResult = {
-  pngBytes: Uint8Array
-  paletteLength: number
-  width: number
-  height: number
-}
+export type QuantizeResult = WorkerQuantizeResult
 
-/** Matches: pngquant --quality=0-20 --nofs */
-export const DEFAULT_OPTIONS: Required<
-  Pick<QuantizeOptions, 'quality' | 'dithering' | 'maxColors'>
-> = {
-  quality: { min: 0, target: 20 },
+/** Matches: pngquant --quality=0-20 --nofs (plus the strongest deflate, which changes no pixel). */
+export const DEFAULT_OPTIONS: QuantizeOptions = {
+  quality: { min: 0, max: 20 },
   dithering: false,
   maxColors: 256,
+  compression: 'smallest',
+  keepMetadata: true,
+}
+
+/** System.IO.Compression.CompressionLevel values. */
+const COMPRESSION_LEVEL: Record<Compression, number> = {
+  default: 0,
+  fast: 1,
+  smallest: 3,
+}
+
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback
+  return Math.min(max, Math.max(min, n))
+}
+
+/** Fills in and clamps options read from an untrusted place (localStorage). */
+export function normalizeOptions(raw: unknown): QuantizeOptions {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<QuantizeOptions>
+  const q = (o.quality && typeof o.quality === 'object' ? o.quality : {}) as Partial<QuantizeOptions['quality']>
+  const max = clamp(q.max, 0, 100, DEFAULT_OPTIONS.quality.max)
+  const min = Math.min(max, clamp(q.min, 0, 100, DEFAULT_OPTIONS.quality.min))
+  const compression: Compression =
+    o.compression === 'fast' || o.compression === 'default' || o.compression === 'smallest'
+      ? o.compression
+      : DEFAULT_OPTIONS.compression
+  return {
+    quality: { min, max },
+    maxColors: clamp(o.maxColors, 2, 256, DEFAULT_OPTIONS.maxColors),
+    dithering: typeof o.dithering === 'boolean' ? o.dithering : DEFAULT_OPTIONS.dithering,
+    compression,
+    keepMetadata: typeof o.keepMetadata === 'boolean' ? o.keepMetadata : DEFAULT_OPTIONS.keepMetadata,
+  }
+}
+
+export function isDefaultOptions(options: QuantizeOptions): boolean {
+  return (
+    options.quality.min === DEFAULT_OPTIONS.quality.min &&
+    options.quality.max === DEFAULT_OPTIONS.quality.max &&
+    options.maxColors === DEFAULT_OPTIONS.maxColors &&
+    options.dithering === DEFAULT_OPTIONS.dithering &&
+    options.compression === DEFAULT_OPTIONS.compression &&
+    options.keepMetadata === DEFAULT_OPTIONS.keepMetadata
+  )
+}
+
+/** The pngquant command line these options correspond to (deflate strength has no exact CLI twin). */
+export function toCliCommand(options: QuantizeOptions): string {
+  const parts = ['pngquant', `--quality=${options.quality.min}-${options.quality.max}`]
+  if (!options.dithering) parts.push('--nofs')
+  if (options.keepMetadata === false) parts.push('--strip')
+  if (options.maxColors !== 256) parts.push(String(options.maxColors))
+  parts.push('input.png', '-o', 'output.png')
+  return parts.join(' ')
 }
 
 type WorkerRequest = {
   id: number
   pngBytes: ArrayBuffer
-  options?: QuantizeOptions
+  options: WorkerQuantizeOptions
 }
 
 type WorkerSuccess = {
   id: number
   success: true
-  result: {
-    pngBytes: Uint8Array
-    paletteLength: number
-    width: number
-    height: number
-  }
+  result: WorkerQuantizeResult
 }
 
 type WorkerFailure = {
@@ -78,13 +126,7 @@ function getWorker(): Worker {
       return
     }
 
-    const { result } = message
-    entry.resolve({
-      pngBytes: result.pngBytes,
-      paletteLength: result.paletteLength,
-      width: result.width,
-      height: result.height,
-    })
+    entry.resolve(message.result)
   }
 
   worker.onerror = (event) => {
@@ -100,27 +142,11 @@ function getWorker(): Worker {
   return worker
 }
 
-async function toArrayBuffer(
-  pngData: Uint8Array | ArrayBuffer | Blob,
-): Promise<ArrayBuffer> {
-  if (pngData instanceof Blob) {
-    return pngData.arrayBuffer()
-  }
-
-  if (pngData instanceof ArrayBuffer) {
-    return pngData.slice(0)
-  }
-
-  const copy = new Uint8Array(pngData.byteLength)
-  copy.set(pngData)
-  return copy.buffer
-}
-
 export async function quantizePng(
-  pngData: Uint8Array | ArrayBuffer | Blob,
+  pngData: Blob | ArrayBuffer,
   options: QuantizeOptions = DEFAULT_OPTIONS,
 ): Promise<QuantizeResult> {
-  const buffer = await toArrayBuffer(pngData)
+  const buffer = pngData instanceof Blob ? await pngData.arrayBuffer() : pngData.slice(0)
   const activeWorker = getWorker()
   const id = nextId++
 
@@ -131,9 +157,12 @@ export async function quantizePng(
       id,
       pngBytes: buffer,
       options: {
-        ...DEFAULT_OPTIONS,
-        ...options,
-        quality: options.quality ?? DEFAULT_OPTIONS.quality,
+        minQuality: options.quality.min,
+        maxQuality: options.quality.max,
+        maxColors: options.maxColors,
+        dithering: options.dithering,
+        compressionLevel: COMPRESSION_LEVEL[options.compression],
+        keepMetadata: options.keepMetadata,
       },
     }
 
