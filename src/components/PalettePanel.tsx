@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useI18n } from '../i18n/context'
 
 type Props = {
   /** RGBA, 4 bytes per entry. */
@@ -11,6 +12,7 @@ function hex(n: number) {
 
 export function PalettePanel({ palette }: Props) {
   const [copied, setCopied] = useState<number | null>(null)
+  const { t } = useI18n()
   const colors = useMemo(() => {
     const list: { r: number; g: number; b: number; a: number; code: string }[] = []
     for (let i = 0; i + 3 < palette.length; i += 4) {
@@ -26,9 +28,9 @@ export function PalettePanel({ palette }: Props) {
   return (
     <section className="card fade-in p-5">
       <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="m-0 text-sm font-semibold tracking-wide text-fg">调色板</h2>
+        <h2 className="m-0 text-sm font-semibold tracking-wide text-fg">{t.palette}</h2>
         <span className="tabular font-mono text-xs text-muted">
-          {copied !== null ? `已复制 ${colors[copied]?.code}` : `${colors.length} 色 · 点击复制色值`}
+          {copied !== null ? t.copiedValue(colors[copied]?.code ?? '') : t.paletteCount(colors.length)}
         </span>
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(22px,1fr))] gap-1">

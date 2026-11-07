@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react'
+import { useI18n } from '../i18n/context'
 
 type Props = {
   beforeUrl: string
@@ -21,6 +22,7 @@ const MAX_SCALE = 32
  */
 export function CompareView({ beforeUrl, afterUrl, width, height, processing }: Props) {
   const boxRef = useRef<HTMLDivElement>(null)
+  const { t } = useI18n()
   const [box, setBox] = useState<Size>({ w: 0, h: 0 })
   /** null: fit the box. */
   const [zoom, setZoom] = useState<number | null>(null)
@@ -163,10 +165,10 @@ export function CompareView({ beforeUrl, afterUrl, width, height, processing }: 
           canPan ? 'cursor-grab active:cursor-grabbing' : afterUrl ? 'cursor-ew-resize' : '',
         ].join(' ')}
       >
-        <img src={beforeUrl} alt="原图" draggable={false} style={imgStyle} />
+        <img src={beforeUrl} alt={t.original} draggable={false} style={imgStyle} />
         {afterUrl ? (
           <div className="absolute inset-0" style={{ clipPath: `inset(0 0 0 ${splitPct})` }}>
-            <img src={afterUrl} alt="压缩后" draggable={false} style={imgStyle} />
+            <img src={afterUrl} alt={t.compressed} draggable={false} style={imgStyle} />
           </div>
         ) : null}
 
@@ -176,7 +178,7 @@ export function CompareView({ beforeUrl, afterUrl, width, height, processing }: 
               data-divider
               role="slider"
               tabIndex={0}
-              aria-label="对比分割线"
+              aria-label={t.divider}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(split * 100)}
@@ -199,20 +201,20 @@ export function CompareView({ beforeUrl, afterUrl, width, height, processing }: 
                 </svg>
               </div>
             </div>
-            <Badge className="left-3">原图</Badge>
-            <Badge className="right-3">压缩后</Badge>
+            <Badge className="left-3">{t.original}</Badge>
+            <Badge className="right-3">{t.compressed}</Badge>
           </>
         ) : (
-          <Badge className="left-3">原图</Badge>
+          <Badge className="left-3">{t.original}</Badge>
         )}
 
         {processing ? <div className="sweep" /> : null}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3 py-2">
-        <div className="flex items-center gap-1" role="group" aria-label="缩放">
+        <div className="flex items-center gap-1" role="group" aria-label={t.zoom}>
           <ZoomButton active={zoom === null} onClick={() => zoomTo(null)}>
-            适应
+            {t.zoomFit}
           </ZoomButton>
           {ZOOM_STEPS.map((z) => (
             <ZoomButton key={z} active={zoom === z} onClick={() => zoomTo(z)}>
@@ -222,7 +224,7 @@ export function CompareView({ beforeUrl, afterUrl, width, height, processing }: 
         </div>
         <div className="tabular font-mono text-[11px] text-muted">
           {Math.round(scale * 100)}%
-          <span className="ml-3 hidden sm:inline">Ctrl + 滚轮缩放 · 拖动平移 · 双击切换</span>
+          <span className="ml-3 hidden sm:inline">{t.zoomHelp}</span>
         </div>
       </div>
     </div>

@@ -13,6 +13,8 @@ import {
   quantizePng,
   type QuantizeOptions,
 } from './lib/pngquant'
+import { useI18n } from './i18n/context'
+import { ERR_DECODE, ERR_NO_CANVAS, type Lang, type Messages } from './i18n/messages'
 
 type SourceImage = {
   file: File
@@ -31,6 +33,23 @@ type ResultImage = {
   palette: Uint8Array
   outputName: string
   blob: Blob
+}
+
+/** Errors are kept as codes and turned into text at render time, so they follow a language switch. */
+const ERR_NOT_IMAGE = 'ERR_NOT_IMAGE'
+const ERR_REMOTE_DROP = 'ERR_REMOTE_DROP'
+const ERR_QUANTIZE = 'ERR_QUANTIZE'
+const ERROR_TEXT: Record<string, keyof Messages> = {
+  [ERR_NOT_IMAGE]: 'errNotImage',
+  [ERR_REMOTE_DROP]: 'errRemoteDrop',
+  [ERR_QUANTIZE]: 'errQuantize',
+  [ERR_DECODE]: 'errDecode',
+  [ERR_NO_CANVAS]: 'errNoCanvas',
+}
+
+function errorText(error: string, t: Messages): string {
+  const key = ERROR_TEXT[error]
+  return key ? (t[key] as string) : error
 }
 
 const STORAGE_KEY = 'pngquant-web:options'
@@ -88,12 +107,13 @@ function readSize(url: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
-    img.onerror = () => reject(new Error('浏览器无法解码这张图片，请换成 PNG / JPEG / WebP / AVIF 等常见格式。'))
+    img.onerror = () => reject(new Error(ERR_DECODE))
     img.src = url
   })
 }
 
 export default function App() {
+  const { t, lang, setLang } = useI18n()
   const [source, setSource] = useState<SourceImage | null>(null)
   const [result, setResult] = useState<ResultImage | null>(null)
   const [options, setOptions] = useState<QuantizeOptions>(loadOptions)
@@ -160,7 +180,7 @@ export default function App() {
       }
 
       if (!isImageFile(file)) {
-        setError('请选择图片文件。')
+        setError(ERR_NOT_IMAGE)
         return
       }
 
@@ -229,7 +249,7 @@ export default function App() {
       if (!url) return
       void fileFromUrl(url).then(
         (file) => handleFiles([file]),
-        () => setError('无法读取拖入的网页图片（对方网站可能禁止跨域访问），请先保存到本地再拖入。'),
+        () => setError(ERR_REMOTE_DROP),
       )
     }
     window.addEventListener('dragenter', onEnter)
@@ -268,7 +288,7 @@ export default function App() {
         setElapsedMs(Math.round(performance.now() - started))
       } catch (err) {
         if (id !== requestId.current) return
-        setError(err instanceof Error ? err.message : '压缩失败，请换一张 PNG 再试。')
+        setError(err instanceof Error && err.message ? err.message : ERR_QUANTIZE)
       } finally {
         if (id === requestId.current) setProcessing(false)
       }
@@ -308,21 +328,25 @@ export default function App() {
           <img src="/favicon.svg" alt="" className="h-9 w-9 rounded-[10px] ring-1 ring-line-strong" />
           <div className="min-w-0">
             <h1 className="m-0 text-[17px] leading-tight font-semibold tracking-tight text-fg">pngquant Web</h1>
-            <p className="m-0 truncate text-xs text-muted">浏览器本地调色板压缩 · 图片不会离开你的设备</p>
+            <p className="m-0 truncate text-xs text-muted">{t.tagline}</p>
           </div>
         </div>
 
-        <a
-          href="https://github.com/sdcb/pngquant-web"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-line px-3 text-xs font-medium text-fg-2 no-underline transition hover:border-line-strong hover:text-fg"
-        >
-          <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
-          </svg>
-          GitHub
-        </a>
+        <div className="flex shrink-0 items-center gap-2">
+          <LangSwitch lang={lang} onChange={setLang} label={t.langLabel} />
+          <a
+            href="https://github.com/sdcb/pngquant-web"
+            target="_blank"
+            rel="noreferrer"
+            aria-label={t.githubLabel}
+            title={t.githubLabel}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-fg-2 transition hover:border-line-strong hover:text-fg"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+            </svg>
+          </a>
+        </div>
       </header>
 
       <main className="grid flex-1 items-start gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -341,12 +365,12 @@ export default function App() {
                 </div>
               </div>
               <Dropzone onFiles={handleFiles} className="shrink-0 !border-solid border-line px-2.5 py-1.5 text-xs text-fg-2 hover:text-fg">
-                更换
+                {t.replace}
               </Dropzone>
               <button
                 type="button"
                 onClick={() => void setSourceFile(null)}
-                aria-label="清除图片"
+                aria-label={t.clearImage}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted transition hover:bg-white/5 hover:text-fg"
               >
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -362,7 +386,7 @@ export default function App() {
         <div className="order-1 flex min-w-0 flex-col gap-5 lg:order-none">
           {error ? (
             <div role="alert" className="fade-in rounded-xl border border-bad/30 bg-bad/10 px-4 py-3 text-sm text-[#ffd9d4]">
-              {error}
+              {errorText(error, t)}
             </div>
           ) : null}
 
@@ -388,7 +412,7 @@ export default function App() {
 
               {result && !isLosslessPngLike(source.file) && result.bytes >= source.bytes ? (
                 <p className="m-0 px-1 text-xs text-muted">
-                  源文件是有损格式（如 JPEG / WebP / AVIF），转成调色板 PNG 不一定更小；这类图更适合截图、图标、插画。
+                  {t.lossyHint}
                 </p>
               ) : null}
 
@@ -396,7 +420,7 @@ export default function App() {
                 <PalettePanel key={result.url} palette={result.palette} />
               ) : result ? (
                 <p className="m-0 px-1 text-xs text-muted">
-                  输出没有调色板：可能最低质量没有达到，按无损写出；也可能结果是灰度图。
+                  {t.noPaletteHint}
                 </p>
               ) : null}
             </>
@@ -411,19 +435,20 @@ export default function App() {
                 </svg>
               </div>
               <div>
-                <div className="text-xl font-semibold tracking-tight text-fg">拖入图片，或点击选择</div>
+                <div className="text-xl font-semibold tracking-tight text-fg">{t.emptyTitle}</div>
                 <p className="mx-auto mt-2 mb-0 max-w-md text-sm text-muted">
-                  也可以直接按{' '}
+                  {t.emptyPastePrefix}{' '}
                   <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-2">Ctrl</kbd>{' '}
                   +{' '}
-                  <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-2">V</kbd>{' '}
-                  粘贴。量化在浏览器里用 WebAssembly 完成，不上传任何数据。
+                  <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-2">V</kbd>
+                  {lang === 'zh' ? ' ' : ''}
+                  {t.emptyPasteSuffix}
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 text-[11px] text-muted">
-                {['PNG / JPEG / WebP / AVIF', '前后对比', '像素级缩放', '本地处理'].map((t) => (
-                  <span key={t} className="rounded-full border border-line px-2.5 py-1">
-                    {t}
+                {t.emptyTags.map((tag) => (
+                  <span key={tag} className="rounded-full border border-line px-2.5 py-1">
+                    {tag}
                   </span>
                 ))}
               </div>
@@ -435,8 +460,8 @@ export default function App() {
       {dragging ? (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-bg/75 p-6 backdrop-blur-sm">
           <div className="fade-in flex h-full max-h-[480px] w-full max-w-3xl flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-gold/70 bg-gold/[0.04]">
-            <div className="text-xl font-semibold tracking-tight text-fg">松开即可载入</div>
-            <div className="text-sm text-muted">PNG、JPEG、WebP、AVIF、GIF 等浏览器能打开的图片</div>
+            <div className="text-xl font-semibold tracking-tight text-fg">{t.dropTitle}</div>
+            <div className="text-sm text-muted">{t.dropHint}</div>
           </div>
         </div>
       ) : null}
@@ -445,17 +470,48 @@ export default function App() {
         <span>MIT</span>
         <span aria-hidden>·</span>
         <span>
-          量化器{' '}
+          {t.footerQuantizer}{' '}
           <a href="https://github.com/sdcb/SimdCodecs" target="_blank" rel="noreferrer" className="text-fg-2 no-underline hover:text-gold-soft">
             Sdcb.SimdCodecs
           </a>{' '}
-          （.NET WebAssembly + SIMD）
+          (.NET WebAssembly + SIMD)
         </span>
         <span aria-hidden>·</span>
         <a href="https://pngquant.sdcb.ai" className="text-fg-2 no-underline hover:text-gold-soft">
           pngquant.sdcb.ai
         </a>
       </footer>
+    </div>
+  )
+}
+
+function LangSwitch({ lang, onChange, label }: { lang: Lang; onChange: (lang: Lang) => void; label: string }) {
+  const choices: { value: Lang; text: string; name: string }[] = [
+    { value: 'zh', text: '中', name: '中文' },
+    { value: 'en', text: 'EN', name: 'English' },
+  ]
+  return (
+    <div role="radiogroup" aria-label={label} className="flex h-9 items-center gap-0.5 rounded-lg border border-line p-0.5">
+      {choices.map((c) => {
+        const active = lang === c.value
+        return (
+          <button
+            key={c.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            aria-label={c.name}
+            title={c.name}
+            onClick={() => onChange(c.value)}
+            className={[
+              'h-full min-w-8 rounded-md px-2 text-xs font-medium transition',
+              active ? 'bg-surface-2 text-gold-soft shadow-[inset_0_0_0_1px_var(--color-line-strong)]' : 'text-muted hover:text-fg',
+            ].join(' ')}
+          >
+            {c.text}
+          </button>
+        )
+      })}
     </div>
   )
 }

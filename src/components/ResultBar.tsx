@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { formatBytes, formatPercent } from '../lib/format'
+import { useI18n } from '../i18n/context'
 
 type Props = {
   sourceBytes: number
@@ -20,6 +21,7 @@ const canCopyImage =
 
 export function ResultBar({ sourceBytes, result, elapsedMs, processing, onDownload }: Props) {
   const [copyState, setCopyState] = useState<'idle' | 'done' | 'failed'>('idle')
+  const { t } = useI18n()
 
   const ratio = result && sourceBytes > 0 ? (sourceBytes - result.bytes) / sourceBytes : null
   const grew = ratio !== null && ratio < 0
@@ -52,12 +54,12 @@ export function ResultBar({ sourceBytes, result, elapsedMs, processing, onDownlo
           </div>
         </div>
         <dl className="m-0 flex flex-wrap gap-x-5 gap-y-2 text-xs">
-          <Stat label="尺寸" value={result ? `${result.width}×${result.height}` : '–'} />
+          <Stat label={t.statSize} value={result ? `${result.width}×${result.height}` : '–'} />
           <Stat
-            label="颜色"
-            value={result ? (result.paletteLength > 0 ? `${result.paletteLength}` : '无调色板') : '–'}
+            label={t.statColors}
+            value={result ? (result.paletteLength > 0 ? `${result.paletteLength}` : t.noPalette) : '–'}
           />
-          <Stat label="耗时" value={elapsedMs == null ? '–' : `${elapsedMs} ms`} />
+          <Stat label={t.statTime} value={elapsedMs == null ? '–' : `${elapsedMs} ms`} />
         </dl>
       </div>
 
@@ -69,7 +71,7 @@ export function ResultBar({ sourceBytes, result, elapsedMs, processing, onDownlo
             onClick={() => void copy()}
             className="h-10 rounded-xl border border-line-strong px-4 text-sm font-medium text-fg-2 transition enabled:hover:border-white/25 enabled:hover:text-fg disabled:opacity-40"
           >
-            {copyState === 'done' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制图片'}
+            {copyState === 'done' ? t.copied : copyState === 'failed' ? t.copyFailed : t.copyImage}
           </button>
         ) : null}
         <button
@@ -81,7 +83,7 @@ export function ResultBar({ sourceBytes, result, elapsedMs, processing, onDownlo
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
             <path d="M8 2v8m0 0 3.5-3.5M8 10 4.5 6.5M3 13h10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          下载
+          {t.download}
         </button>
       </div>
     </div>

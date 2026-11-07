@@ -2,6 +2,8 @@
 // the browser can decode: PNG goes straight to .NET, other formats are decoded by the browser first.
 // `npm run build:wasm` publishes it to public/dotnet.
 
+import { ERR_DECODE, ERR_NO_CANVAS } from '../i18n/messages'
+
 export type WorkerQuantizeOptions = {
   minQuality: number
   maxQuality: number
@@ -127,13 +129,13 @@ async function decodeWithBrowser(bytes: Uint8Array): Promise<{ rgba: Uint8Array;
       colorSpaceConversion: 'default',
     })
   } catch {
-    throw new Error('浏览器无法解码这张图片，请换成 PNG / JPEG / WebP / AVIF 等常见格式。')
+    throw new Error(ERR_DECODE)
   }
   try {
     const { width, height } = bitmap
     const canvas = new OffscreenCanvas(width, height)
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
-    if (!ctx) throw new Error('当前浏览器不支持 OffscreenCanvas 2D。')
+    if (!ctx) throw new Error(ERR_NO_CANVAS)
     ctx.drawImage(bitmap, 0, 0)
     const data = ctx.getImageData(0, 0, width, height, { colorSpace: 'srgb' }).data
     return { rgba: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), width, height }

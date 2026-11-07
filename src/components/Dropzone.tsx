@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from 'react'
+import { useI18n } from '../i18n/context'
 
 type Props = {
   onFiles: (files: FileList | File[] | null) => void
@@ -9,12 +10,13 @@ type Props = {
 /** Opens the file picker on click or Enter/Space. Dropping and pasting are handled for the whole window in App. */
 export function Dropzone({ onFiles, className = '', children }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const { t } = useI18n()
 
   return (
     <div
       role="button"
       tabIndex={0}
-      aria-label="选择图片文件"
+      aria-label={t.pickImage}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()

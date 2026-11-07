@@ -6,19 +6,22 @@ import {
   type Compression,
   type QuantizeOptions,
 } from '../lib/pngquant'
+import { useI18n } from '../i18n/context'
+import type { Messages } from '../i18n/messages'
 
 type Props = {
   options: QuantizeOptions
   onChange: (options: QuantizeOptions) => void
 }
 
-const COMPRESSION_CHOICES: { value: Compression; label: string; hint: string }[] = [
-  { value: 'fast', label: '快速', hint: 'Deflate Fastest：最快，文件稍大' },
-  { value: 'default', label: '标准', hint: 'Deflate Optimal（zlib 6）' },
-  { value: 'smallest', label: '最小', hint: 'Deflate SmallestSize：像素不变，文件最小' },
+const COMPRESSION_CHOICES: { value: Compression; label: keyof Messages; hint: keyof Messages }[] = [
+  { value: 'fast', label: 'compressionFast', hint: 'compressionFastHint' },
+  { value: 'default', label: 'compressionDefault', hint: 'compressionDefaultHint' },
+  { value: 'smallest', label: 'compressionSmallest', hint: 'compressionSmallestHint' },
 ]
 
 export function SettingsPanel({ options, onChange }: Props) {
+  const { t } = useI18n()
   const isDefault = isDefaultOptions(options)
   const command = toCliCommand(options)
   const { min, max } = options.quality
@@ -37,18 +40,18 @@ export function SettingsPanel({ options, onChange }: Props) {
   return (
     <section className="card flex flex-col gap-5 p-5">
       <div className="flex items-center justify-between">
-        <h2 className="m-0 text-sm font-semibold tracking-wide text-fg">参数</h2>
+        <h2 className="m-0 text-sm font-semibold tracking-wide text-fg">{t.settings}</h2>
         <button
           type="button"
           disabled={isDefault}
           onClick={() => onChange(DEFAULT_OPTIONS)}
           className="rounded-md px-2 py-1 text-xs text-fg-2 transition hover:bg-white/5 hover:text-fg disabled:opacity-35 disabled:hover:bg-transparent"
         >
-          恢复默认
+          {t.resetDefaults}
         </button>
       </div>
 
-      <Field label="质量区间" value={`${min} – ${max}`} hint="min 达不到时按无损写出；max 越低颜色越少、文件越小">
+      <Field label={t.quality} value={`${min} – ${max}`} hint={t.qualityHint}>
         <div className="dual-range">
           <input
             type="range"
@@ -56,7 +59,7 @@ export function SettingsPanel({ options, onChange }: Props) {
             min={0}
             max={100}
             value={min}
-            aria-label="最低质量"
+            aria-label={t.minQuality}
             style={{
               ['--track' as string]: `linear-gradient(90deg, var(--color-line-strong) ${minPct}%, var(--color-gold) ${minPct}% ${maxPct}%, var(--color-line-strong) ${maxPct}%)`,
             }}
@@ -68,13 +71,13 @@ export function SettingsPanel({ options, onChange }: Props) {
             min={0}
             max={100}
             value={max}
-            aria-label="目标质量"
+            aria-label={t.maxQuality}
             onChange={(e) => setQuality({ max: Number(e.target.value) })}
           />
         </div>
       </Field>
 
-      <Field label="最大颜色数" value={String(options.maxColors)}>
+      <Field label={t.maxColors} value={String(options.maxColors)}>
         <div className="flex items-center gap-3">
           <input
             type="range"
@@ -82,7 +85,7 @@ export function SettingsPanel({ options, onChange }: Props) {
             min={2}
             max={256}
             value={options.maxColors}
-            aria-label="最大颜色数"
+            aria-label={t.maxColors}
             style={{
               ['--track' as string]: `linear-gradient(90deg, var(--color-gold) ${((options.maxColors - 2) / 254) * 100}%, var(--color-line-strong) 0)`,
             }}
@@ -90,6 +93,7 @@ export function SettingsPanel({ options, onChange }: Props) {
           />
           <NumberBox
             value={options.maxColors}
+            label={t.maxColors}
             min={2}
             max={256}
             onCommit={(maxColors) => onChange({ ...options, maxColors })}
@@ -99,21 +103,21 @@ export function SettingsPanel({ options, onChange }: Props) {
 
       <div className="flex flex-col gap-3">
         <Toggle
-          label="Floyd–Steinberg 抖动"
-          hint="平滑渐变更顺，但文件更大"
+          label={t.dithering}
+          hint={t.ditheringHint}
           checked={options.dithering}
           onChange={(dithering) => onChange({ ...options, dithering })}
         />
         <Toggle
-          label="保留色彩元数据"
-          hint="ICC / sRGB / gAMA / cHRM / cICP；关闭相当于 --strip"
+          label={t.keepMetadata}
+          hint={t.keepMetadataHint}
           checked={options.keepMetadata}
           onChange={(keepMetadata) => onChange({ ...options, keepMetadata })}
         />
       </div>
 
-      <Field label="压缩强度">
-        <div role="radiogroup" aria-label="压缩强度" className="grid grid-cols-3 gap-1 rounded-lg border border-line bg-bg/60 p-1">
+      <Field label={t.compression}>
+        <div role="radiogroup" aria-label={t.compression} className="grid grid-cols-3 gap-1 rounded-lg border border-line bg-bg/60 p-1">
           {COMPRESSION_CHOICES.map((choice) => {
             const active = options.compression === choice.value
             return (
@@ -122,21 +126,21 @@ export function SettingsPanel({ options, onChange }: Props) {
                 type="button"
                 role="radio"
                 aria-checked={active}
-                title={choice.hint}
+                title={t[choice.hint] as string}
                 onClick={() => onChange({ ...options, compression: choice.value })}
                 className={[
                   'rounded-md py-1.5 text-xs font-medium transition',
                   active ? 'bg-surface-2 text-gold-soft shadow-[inset_0_0_0_1px_var(--color-line-strong)]' : 'text-fg-2 hover:text-fg',
                 ].join(' ')}
               >
-                {choice.label}
+                {t[choice.label] as string}
               </button>
             )
           })}
         </div>
       </Field>
 
-      <CommandPreview command={command} />
+      <CommandPreview command={command} label={t.command} copyLabel={t.copy} copiedLabel={t.copied} />
     </section>
   )
 }
@@ -197,11 +201,13 @@ function Toggle({
 
 function NumberBox({
   value,
+  label,
   min,
   max,
   onCommit,
 }: {
   value: number
+  label: string
   min: number
   max: number
   onCommit: (value: number) => void
@@ -217,7 +223,7 @@ function NumberBox({
     <input
       type="text"
       inputMode="numeric"
-      aria-label="最大颜色数"
+      aria-label={label}
       value={draft ?? String(value)}
       onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ''))}
       onBlur={commit}
@@ -230,12 +236,22 @@ function NumberBox({
   )
 }
 
-function CommandPreview({ command }: { command: string }) {
+function CommandPreview({
+  command,
+  label,
+  copyLabel,
+  copiedLabel,
+}: {
+  command: string
+  label: string
+  copyLabel: string
+  copiedLabel: string
+}) {
   const [copied, setCopied] = useState(false)
   return (
     <div className="flex flex-col gap-2 border-t border-line pt-4">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-fg-2">等价命令</span>
+        <span className="text-xs font-medium text-fg-2">{label}</span>
         <button
           type="button"
           onClick={() => {
@@ -246,7 +262,7 @@ function CommandPreview({ command }: { command: string }) {
           }}
           className="rounded-md px-2 py-0.5 text-[11px] text-fg-2 transition hover:bg-white/5 hover:text-fg"
         >
-          {copied ? '已复制' : '复制'}
+          {copied ? copiedLabel : copyLabel}
         </button>
       </div>
       <code className="block rounded-lg border border-line bg-bg/70 px-3 py-2.5 font-mono text-[11.5px] leading-relaxed break-words text-fg-2">
